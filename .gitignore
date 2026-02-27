@@ -1,0 +1,7 @@
+.env
+go.sum
+youtube_token.json
+client_secret.json
+workspace/
+description_template.txt
+/tam

@@ -1,0 +1,12 @@
+{{if .HasMultipleCategories}}【カテゴリチャプター】
+{{range .Chapters}}{{.Timestamp}} {{.Title}}
+{{end}}
+{{end}}
+【各種リンク】
+Twitch: https://twitch.tv/your-twitch-id
+Twitter: https://twitter.com/your-twitter-id
+
+{{end}}
+カテゴリ: {{.CategoriesStr}}
+配信時間: {{.DurationHMS}}
+配信日時: {{.CreatedAtLocal}}
