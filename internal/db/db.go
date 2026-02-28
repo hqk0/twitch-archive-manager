@@ -137,6 +137,27 @@ func logCreatedAtError(val string, err error) {
 	// time.Parse失敗時のログ出力用（必要なら）
 }
 
+func (c *D1Client) SaveMetadata(v *Video) error {
+	// 1. Check if exists
+	sql := "SELECT id FROM videos WHERE id = ?;"
+	results, err := c.Query(sql, []interface{}{v.ID})
+	if err != nil {
+		return err
+	}
+
+	if len(results) > 0 {
+		// UPDATE (Keep yt_id fields)
+		sql = "UPDATE videos SET title = ?, category = ?, duration = ?, created_at = ? WHERE id = ?;"
+		_, err = c.Query(sql, []interface{}{v.Title, v.Category, v.Duration, v.CreatedAt.Format(time.RFC3339), v.ID})
+		return err
+	}
+
+	// INSERT
+	sql = "INSERT INTO videos (id, title, category, duration, created_at, status_raw, status_burned) VALUES (?, ?, ?, ?, ?, ?, ?);"
+	_, err = c.Query(sql, []interface{}{v.ID, v.Title, v.Category, v.Duration, v.CreatedAt.Format(time.RFC3339), v.StatusRaw, v.StatusBurned})
+	return err
+}
+
 func (c *D1Client) UpdateStatusRaw(vodID int64, status int) error {
 	sql := "UPDATE videos SET status_raw = ? WHERE id = ?;"
 	_, err := c.Query(sql, []interface{}{status, vodID})
