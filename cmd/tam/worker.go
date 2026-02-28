@@ -37,14 +37,14 @@ func runWorker() {
 		log.Fatalf("Error determining workspace: %v", err)
 	}
 
-	// Check if D1 is configured
 	if !cfg.HasD1() {
-		log.Fatalf("Worker mode requires Cloudflare D1 configuration. Please set CF_API_TOKEN, CF_ACCOUNT_ID, and D1_DATABASE_ID in your .env file.\nFor a single VOD without a database, use 'tam archive <vod_id>' instead.")
+		log.Fatalf("Worker mode requires Cloudflare D1 configuration. Please set CF_API_TOKEN, CF_ACCOUNT_ID, and D1_DATABASE_ID in your .env file.")
 	}
 
-	// 1. Workspace directory check
+	fmt.Printf("Worker started. Workspace: %s\n", workspaceDir)
+
 	if _, err := os.Stat(workspaceDir); os.IsNotExist(err) {
-		log.Printf("Workspace directory %s not found. Skipping...", workspaceDir)
+		fmt.Printf("Workspace directory %s not found. SSD might not be mounted. Exiting...\n", workspaceDir)
 		return
 	}
 
@@ -59,6 +59,13 @@ func runWorker() {
 		log.Fatalf("Failed to get tasks from D1: %v", err)
 	}
 
+	if len(tasks) == 0 {
+		fmt.Println("No pending tasks found in database. Working finished.")
+		return
+	}
+
+	fmt.Printf("Found %d tasks to check.\n", len(tasks))
+
 	ctx := context.Background()
 
 	for _, task := range tasks {
@@ -66,22 +73,23 @@ func runWorker() {
 			processPendingTask(ctx, task, cfg, workspaceDir, d1, r2Client)
 		} else if task.StatusBurned == 2 {
 			processBurnedTask(ctx, task, cfg, workspaceDir, d1)
+		} else if task.StatusBurned == 3 {
+			fmt.Printf("[%d] Task is currently marked as 'uploading' (3). Skipping to avoid conflict.\n", task.ID)
 		}
 	}
+	
+	fmt.Println("Worker cycle completed.")
 }
 
 func processPendingTask(ctx context.Context, task db.Video, cfg *config.Config, workspaceDir string, d1 *db.D1Client, r2Client *r2.R2Client) {
 	log.Printf("[%d] Processing pending task: %s", task.ID, task.Title)
 	notify.SendNotification(cfg, "アーカイブ処理開始", fmt.Sprintf("VOD %d のダウンロードと焼き込みを開始します: %s", task.ID, task.Title), "low")
 
-	// Update status to burning (1)
 	d1.UpdateStatusBurned(task.ID, 1)
 
-	// Create directories
 	vodDir := filepath.Join(workspaceDir, fmt.Sprintf("%d", task.ID))
 	os.MkdirAll(vodDir, 0755)
 
-	// Filenames
 	jsonPath := filepath.Join(vodDir, fmt.Sprintf("%d.json", task.ID))
 	assPath := filepath.Join(vodDir, fmt.Sprintf("%d.ass", task.ID))
 	burnedPath := filepath.Join(vodDir, fmt.Sprintf("%d_burned.mp4", task.ID))
@@ -93,26 +101,21 @@ func processPendingTask(ctx context.Context, task db.Video, cfg *config.Config, 
 		return
 	}
 
-	// 2. Download JSON from R2
+	// 2. Download JSON from R2 with Twitch fallback
 	err = r2Client.DownloadFile(ctx, fmt.Sprintf("%d.json", task.ID), jsonPath)
 	if err != nil {
 		log.Printf("[%d] R2 download failed: %v. Attempting Twitch fallback...", task.ID, err)
-		
 		rawTwitchJson := filepath.Join(vodDir, fmt.Sprintf("%d_raw.json", task.ID))
-		err = twitch.DownloadChatJSON(task.ID, rawTwitchJson)
-		if err == nil {
-			err = twitch.ConvertTwitchJSONToIntegratedJSON(rawTwitchJson, jsonPath)
+		if err := twitch.DownloadChatJSON(task.ID, rawTwitchJson); err == nil {
+			_ = twitch.ConvertTwitchJSONToIntegratedJSON(rawTwitchJson, jsonPath)
 			os.Remove(rawTwitchJson)
-		}
-
-		if err != nil {
-			log.Printf("[%d] Twitch fallback also failed: %v. Proceeding with empty chat.", task.ID, err)
+		} else {
+			log.Printf("[%d] Twitch fallback failed. Using empty chat.", task.ID)
 			os.WriteFile(jsonPath, []byte("[]"), 0644)
 		}
 	}
 
 	// 3. Convert JSON to ASS
-	log.Printf("[%d] Converting chat to ASS...", task.ID)
 	assGen := video.NewASSGenerator()
 	err = assGen.GenerateFromJSON(jsonPath, assPath)
 	if err != nil {
@@ -137,34 +140,28 @@ func processPendingTask(ctx context.Context, task db.Video, cfg *config.Config, 
 }
 
 func processBurnedTask(ctx context.Context, task db.Video, cfg *config.Config, workspaceDir string, d1 *db.D1Client) {
-	// Check if 3 days have passed since END of stream
 	duration, _ := twitch.ParseTwitchDuration(task.Duration)
 	endTime := task.CreatedAt.Add(duration)
+	timeLeft := 72*time.Hour - time.Since(endTime)
 
-	if time.Since(endTime) < 72*time.Hour {
+	if timeLeft > 0 {
+		fmt.Printf("[%d] Waiting for embargo: %.1f hours remaining.\n", task.ID, timeLeft.Hours())
 		return
 	}
 
 	log.Printf("[%d] 3 days passed since stream end. Uploading to YouTube...", task.ID)
-	
-	// Update status to uploading (3)
 	d1.UpdateStatusBurned(task.ID, 3)
 
-	// Initialize YouTube client
 	yt, err := youtube.NewYouTubeClient(ctx, "client_secret.json", "youtube_token.json")
 	if err != nil {
 		log.Printf("[%d] Failed to initialize YouTube client: %v", task.ID, err)
+		d1.UpdateStatusBurned(task.ID, 2)
 		return
 	}
 
-	// 1. Get Metadata for title/description
 	metadata, err := twitch.GetVODMetadata(task.ID)
 	if err != nil {
-		log.Printf("[%d] Failed to get VOD metadata from Twitch: %v", task.ID, err)
-		metadata = &twitch.Metadata{
-			Title: task.Title,
-			VODID: task.ID,
-		}
+		metadata = &twitch.Metadata{Title: task.Title, VODID: task.ID}
 	}
 
 	uploadTitle := twitch.GenerateUploadTitle(metadata, cfg)
@@ -178,7 +175,6 @@ func processBurnedTask(ctx context.Context, task db.Video, cfg *config.Config, w
 		return
 	}
 
-	// Update Status to uploaded (4) and set yt_id_burned
 	err = d1.UpdateYTIDBurned(task.ID, ytID, 4)
 	if err != nil {
 		log.Printf("[%d] Failed to update status to uploaded: %v", task.ID, err)
