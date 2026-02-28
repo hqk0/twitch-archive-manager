@@ -24,19 +24,24 @@ var uploadRawCmd = &cobra.Command{
 		}
 
 		cfg := config.Load()
-		workspaceDir := cfg.GetEffectiveWorkspaceDir()
+		workspaceDir, err := cfg.GetEffectiveWorkspaceDir()
+		if err != nil {
+			log.Fatalf("Error determining workspace: %v", err)
+		}
 		d1 := db.NewD1Client(cfg)
 		ctx := context.Background()
+
+		// Path to raw video: workspace/ID/ID.mp4
+		videoPath := filepath.Join(workspaceDir, args[0], fmt.Sprintf("%d.mp4", vodID))
 
 		// Raw video upload: Simple title and empty description
 		uploadTitle := strconv.FormatInt(vodID, 10)
 		description := ""
 
-		// Path to raw video
-		videoPath := filepath.Join(workspaceDir, strconv.FormatInt(vodID, 10), fmt.Sprintf("%d.mp4", vodID))
-
-		fmt.Printf("Uploading RAW video %d to YouTube...\n", vodID)
-		d1.UpdateStatusRaw(vodID, 3) // uploading
+		fmt.Printf("[%d] Uploading RAW video to YouTube...\n", vodID)
+		if cfg.HasD1() {
+			d1.UpdateStatusRaw(vodID, 3) // uploading
+		}
 
 		yt, err := youtube.NewYouTubeClient(ctx, "client_secret.json", "youtube_token.json")
 		if err != nil {
@@ -45,16 +50,19 @@ var uploadRawCmd = &cobra.Command{
 
 		ytID, err := yt.UploadVideo(videoPath, uploadTitle, description, "unlisted")
 		if err != nil {
-			d1.UpdateStatusRaw(vodID, 2) // reset to stored
+			if cfg.HasD1() {
+				d1.UpdateStatusRaw(vodID, 2) // reset to stored
+			}
 			log.Fatalf("Upload failed: %v", err)
 		}
 
-		d1.UpdateStatusRaw(vodID, 4) // uploaded
-		// In existing schema, yt_id is for raw
-		sql := "UPDATE videos SET yt_id = ? WHERE id = ?;"
-		d1.Query(sql, []interface{}{ytID, vodID})
+		if cfg.HasD1() {
+			d1.UpdateStatusRaw(vodID, 4) // uploaded
+			sql := "UPDATE videos SET yt_id = ? WHERE id = ?;"
+			d1.Query(sql, []interface{}{ytID, vodID})
+		}
 
-		fmt.Printf("Successfully uploaded raw video! YouTube ID: %s\n", ytID)
+		fmt.Printf("[%d] SUCCESS! Raw video uploaded. YouTube ID: %s\n", vodID, ytID)
 	},
 }
 

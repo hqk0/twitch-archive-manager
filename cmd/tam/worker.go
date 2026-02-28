@@ -32,7 +32,10 @@ func init() {
 
 func runWorker() {
 	cfg := config.Load()
-	workspaceDir := cfg.GetEffectiveWorkspaceDir()
+	workspaceDir, err := cfg.GetEffectiveWorkspaceDir()
+	if err != nil {
+		log.Fatalf("Error determining workspace: %v", err)
+	}
 
 	// Check if D1 is configured
 	if !cfg.HasD1() {

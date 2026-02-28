@@ -27,14 +27,14 @@ var burnCmd = &cobra.Command{
 		}
 
 		cfg := config.Load()
-		workspaceDir := cfg.GetEffectiveWorkspaceDir()
+		workspaceDir, err := cfg.GetEffectiveWorkspaceDir()
+		if err != nil {
+			log.Fatalf("Error determining workspace: %v", err)
+		}
 		d1 := db.NewD1Client(cfg)
 		r2Client, err := r2.NewR2Client(cfg)
-		if err != nil {
-			log.Fatalf("Failed to initialize R2 client: %v", err)
-		}
-
-		vodDir := filepath.Join(workspaceDir, fmt.Sprintf("%d", vodID))
+		
+		vodDir := filepath.Join(workspaceDir, args[0])
 		videoPath := filepath.Join(vodDir, fmt.Sprintf("%d.mp4", vodID))
 		if _, err := os.Stat(videoPath); os.IsNotExist(err) {
 			log.Fatalf("Raw video not found at %s. Please run download first.", videoPath)
@@ -44,27 +44,33 @@ var burnCmd = &cobra.Command{
 		assPath := filepath.Join(vodDir, fmt.Sprintf("%d.ass", vodID))
 		burnedPath := filepath.Join(vodDir, fmt.Sprintf("%d_burned.mp4", vodID))
 
-		// 1. Get JSON
-		fmt.Printf("Fetching chat data for VOD %d...\n", vodID)
-		err = r2Client.DownloadFile(context.Background(), fmt.Sprintf("%d.json", vodID), jsonPath)
-		if err != nil {
-			fmt.Printf("R2 download failed: %v. Attempting fallback to Twitch...\n", err)
-			
-			rawTwitchJson := filepath.Join(vodDir, fmt.Sprintf("%d_raw.json", vodID))
-			err = twitch.DownloadChatJSON(vodID, rawTwitchJson)
+		// 1. Get JSON (R2 -> Twitch fallback)
+		fmt.Printf("[%d] Fetching chat data...\n", vodID)
+		success := false
+		if cfg.HasR2() {
+			err = r2Client.DownloadFile(context.Background(), fmt.Sprintf("%d.json", vodID), jsonPath)
 			if err == nil {
-				err = twitch.ConvertTwitchJSONToIntegratedJSON(rawTwitchJson, jsonPath)
-				os.Remove(rawTwitchJson)
-			}
-
-			if err != nil {
-				fmt.Printf("Twitch fallback also failed: %v. Using empty chat data.\n", err)
-				os.WriteFile(jsonPath, []byte("[]"), 0644)
+				success = true
 			}
 		}
 
+		if !success {
+			fmt.Printf("[%d] Fetching chat from Twitch (R2 failed or not configured)...\n", vodID)
+			rawTwitchJson := filepath.Join(vodDir, fmt.Sprintf("%d_raw.json", vodID))
+			if err := twitch.DownloadChatJSON(vodID, rawTwitchJson); err == nil {
+				_ = twitch.ConvertTwitchJSONToIntegratedJSON(rawTwitchJson, jsonPath)
+				os.Remove(rawTwitchJson)
+				success = true
+			}
+		}
+
+		if !success {
+			fmt.Printf("[%d] Warning: No chat data could be fetched. Using empty data.\n", vodID)
+			os.WriteFile(jsonPath, []byte("[]"), 0644)
+		}
+
 		// 2. Convert to ASS
-		fmt.Println("Converting chat to ASS...")
+		fmt.Printf("[%d] Converting chat to ASS...\n", vodID)
 		assGen := video.NewASSGenerator()
 		err = assGen.GenerateFromJSON(jsonPath, assPath)
 		if err != nil {
@@ -72,7 +78,7 @@ var burnCmd = &cobra.Command{
 		}
 
 		// 3. Burn
-		fmt.Println("Burning comments to video...")
+		fmt.Printf("[%d] Burning comments to video (Hardware accelerated)...\n", vodID)
 		err = video.BurnSubtitles(videoPath, assPath, burnedPath)
 		if err != nil {
 			log.Fatalf("Failed to burn subtitles: %v", err)
@@ -82,7 +88,7 @@ var burnCmd = &cobra.Command{
 		if cfg.HasD1() {
 			d1.UpdateStatusBurned(vodID, 2)
 		}
-		fmt.Printf("Successfully burned video: %s\n", burnedPath)
+		fmt.Printf("[%d] SUCCESS! Burned video saved at: %s\n", vodID, burnedPath)
 	},
 }
 

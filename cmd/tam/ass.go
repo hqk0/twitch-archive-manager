@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"strconv"
 
 	"github.com/hqk0/twitch-archive-manager/internal/config"
@@ -25,9 +26,13 @@ var assCmd = &cobra.Command{
 	Short: "Convert chat JSON to ASS. Fetches from Twitch by default, or R2 if --r2 is set.",
 	Run: func(cmd *cobra.Command, args []string) {
 		cfg := config.Load()
+		workspaceDir, err := cfg.GetEffectiveWorkspaceDir()
+		if err != nil {
+			log.Fatalf("Error determining workspace: %v", err)
+		}
 		assGen := video.NewASSGenerator()
 
-		// Case A: Input file specified
+		// Case A: Input file specified (Manual mode)
 		if inputJSON != "" {
 			finalOutput := outputASS
 			if finalOutput == "" {
@@ -41,7 +46,7 @@ var assCmd = &cobra.Command{
 			return
 		}
 
-		// Case B: VOD ID specified
+		// Case B: VOD ID specified (Standard mode)
 		if len(args) == 0 {
 			cmd.Help()
 			return
@@ -52,33 +57,35 @@ var assCmd = &cobra.Command{
 			log.Fatalf("Invalid VOD ID: %v", err)
 		}
 
-		jsonPath := fmt.Sprintf("%d.json", vodID)
+		// Set directory to workspace/VOD_ID
+		vodDir := filepath.Join(workspaceDir, args[0])
+		os.MkdirAll(vodDir, 0755)
+
+		jsonPath := filepath.Join(vodDir, fmt.Sprintf("%d.json", vodID))
 		if outputASS == "" {
-			outputASS = fmt.Sprintf("%d.ass", vodID)
+			outputASS = filepath.Join(vodDir, fmt.Sprintf("%d.ass", vodID))
 		}
 
 		success := false
 
-		// 1. Try R2 ONLY if --r2 is set
+		// 1. Try R2 if requested
 		if useR2 {
-			fmt.Printf("Attempting to download %d.json from R2...\n", vodID)
+			fmt.Printf("[%d] Attempting to download chat from R2...\n", vodID)
 			r2Client, err := r2.NewR2Client(cfg)
 			if err == nil {
 				err = r2Client.DownloadFile(context.Background(), fmt.Sprintf("%d.json", vodID), jsonPath)
 				if err == nil {
 					success = true
 				} else {
-					fmt.Printf("R2 download failed: %v\n", err)
+					fmt.Printf("[%d] R2 download failed: %v\n", vodID, err)
 				}
-			} else {
-				fmt.Printf("R2 client init failed: %v\n", err)
 			}
 		}
 
 		// 2. Default: Fetch from Twitch
 		if !success {
-			fmt.Printf("Fetching chat from Twitch for VOD %d...\n", vodID)
-			rawTwitchJson := fmt.Sprintf("%d_raw.json", vodID)
+			fmt.Printf("[%d] Fetching chat from Twitch...\n", vodID)
+			rawTwitchJson := filepath.Join(vodDir, fmt.Sprintf("%d_raw.json", vodID))
 			err = twitch.DownloadChatJSON(vodID, rawTwitchJson)
 			if err != nil {
 				log.Fatalf("Failed to download chat from Twitch: %v", err)
@@ -93,13 +100,13 @@ var assCmd = &cobra.Command{
 		}
 
 		// 3. Convert to ASS
-		fmt.Printf("Converting %s to %s...\n", jsonPath, outputASS)
+		fmt.Printf("[%d] Converting %s to %s...\n", vodID, jsonPath, outputASS)
 		err = assGen.GenerateFromJSON(jsonPath, outputASS)
 		if err != nil {
 			log.Fatalf("ASS conversion failed: %v", err)
 		}
 
-		fmt.Printf("Successfully generated: %s\n", outputASS)
+		fmt.Printf("[%d] Successfully generated: %s\n", vodID, outputASS)
 	},
 }
 

@@ -64,16 +64,21 @@ func Load() *Config {
 	}
 }
 
-func (c *Config) GetEffectiveWorkspaceDir() string {
+func (c *Config) GetEffectiveWorkspaceDir() (string, error) {
 	// Check free space of current directory (.)
 	var stat unix.Statfs_t
 	wd, _ := os.Getwd()
 	err := unix.Statfs(wd, &stat)
 	
+	// Default to primary workspace
+	primaryPath, _ := filepath.Abs(c.WorkspaceDir)
+
 	// If space check fails or no Alt dir is set, use primary workspace
 	if err != nil || c.AltWorkspaceDir == "" {
-		localPath, _ := filepath.Abs(c.WorkspaceDir)
-		return localPath
+		if _, err := os.Stat(primaryPath); os.IsNotExist(err) {
+			return "", fmt.Errorf("workspace directory '%s' not found. Please create it or check your configuration", primaryPath)
+		}
+		return primaryPath, nil
 	}
 
 	freeBytes := stat.Bavail * uint64(stat.Bsize)
@@ -81,11 +86,18 @@ func (c *Config) GetEffectiveWorkspaceDir() string {
 
 	// If local space is low, use alternative workspace (SSD)
 	if freeGB < c.ThresholdGB {
-		return c.AltWorkspaceDir
+		if _, err := os.Stat(c.AltWorkspaceDir); os.IsNotExist(err) {
+			return "", fmt.Errorf("local disk space is low (%d GB free, threshold: %d GB), but alternative workspace (SSD) '%s' is not connected or not found", freeGB, c.ThresholdGB, c.AltWorkspaceDir)
+		}
+		return c.AltWorkspaceDir, nil
 	}
 
-	localPath, _ := filepath.Abs(c.WorkspaceDir)
-	return localPath
+	if _, err := os.Stat(primaryPath); os.IsNotExist(err) {
+		// If primary doesn't exist, try to create it or fall back to Alt if available
+		os.MkdirAll(primaryPath, 0755)
+	}
+
+	return primaryPath, nil
 }
 
 func (c *Config) HasD1() bool {

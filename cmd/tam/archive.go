@@ -23,20 +23,24 @@ var archiveCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		vodID, _ := strconv.ParseInt(args[0], 10, 64)
 		cfg := config.Load()
-		workspaceDir := cfg.GetEffectiveWorkspaceDir()
+		workspaceDir, err := cfg.GetEffectiveWorkspaceDir()
+		if err != nil {
+			log.Fatalf("Error determining workspace: %v", err)
+		}
 		ctx := context.Background()
 
 		vodDir := filepath.Join(workspaceDir, args[0])
 		os.MkdirAll(vodDir, 0755)
 
-		// Filenames
+		// Filenames: Consistent with other commands
 		jsonPath := filepath.Join(vodDir, fmt.Sprintf("%d.json", vodID))
 		assPath := filepath.Join(vodDir, fmt.Sprintf("%d.ass", vodID))
+		videoPath := filepath.Join(vodDir, fmt.Sprintf("%d.mp4", vodID))
 		burnedPath := filepath.Join(vodDir, fmt.Sprintf("%d_burned.mp4", vodID))
 
 		// 1. Download VOD
 		fmt.Printf("[%d] Downloading VOD...\n", vodID)
-		videoPath, err := video.DownloadVOD(vodID, vodDir)
+		_, err = video.DownloadVOD(vodID, vodDir)
 		if err != nil {
 			log.Fatalf("Failed to download VOD: %v", err)
 		}
@@ -65,18 +69,16 @@ var archiveCmd = &cobra.Command{
 		}
 
 		// 3. ASS Conversion
-		fmt.Printf("[%d] Converting to ASS...\n", vodID)
+		fmt.Printf("[%d] Converting chat to ASS...\n", vodID)
 		assGen := video.NewASSGenerator()
-		if success {
-			_ = assGen.GenerateFromJSON(jsonPath, assPath)
-		} else {
-			fmt.Println("Warning: No chat found, generating empty ASS")
+		if !success {
+			fmt.Printf("[%d] Warning: No chat found, generating empty data.\n", vodID)
 			os.WriteFile(jsonPath, []byte("[]"), 0644)
-			_ = assGen.GenerateFromJSON(jsonPath, assPath)
 		}
+		_ = assGen.GenerateFromJSON(jsonPath, assPath)
 
 		// 4. Burn
-		fmt.Printf("[%d] Burning comments (Hardware accelerated)...\n", vodID)
+		fmt.Printf("[%d] Burning comments to video (Hardware accelerated)...\n", vodID)
 		err = video.BurnSubtitles(videoPath, assPath, burnedPath)
 		if err != nil {
 			log.Fatalf("Burning failed: %v", err)

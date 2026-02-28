@@ -25,7 +25,10 @@ var uploadBurnCmd = &cobra.Command{
 		}
 
 		cfg := config.Load()
-		workspaceDir := cfg.GetEffectiveWorkspaceDir()
+		workspaceDir, err := cfg.GetEffectiveWorkspaceDir()
+		if err != nil {
+			log.Fatalf("Error determining workspace: %v", err)
+		}
 		d1 := db.NewD1Client(cfg)
 		ctx := context.Background()
 
@@ -33,17 +36,19 @@ var uploadBurnCmd = &cobra.Command{
 		metadata, err := twitch.GetVODMetadata(vodID)
 		if err != nil {
 			log.Printf("Warning: Failed to get VOD metadata: %v", err)
-			metadata = &twitch.Metadata{VODID: vodID, Title: strconv.FormatInt(vodID, 10)}
+			metadata = &twitch.Metadata{VODID: vodID, Title: args[0]}
 		}
 
 		uploadTitle := twitch.GenerateUploadTitle(metadata, cfg)
 		description := twitch.GenerateDescription(metadata, cfg)
 
-		// Path to burned video
-		burnedPath := filepath.Join(workspaceDir, strconv.FormatInt(vodID, 10), fmt.Sprintf("%d_burned.mp4", vodID))
+		// Path to burned video: workspace/ID/ID_burned.mp4
+		burnedPath := filepath.Join(workspaceDir, args[0], fmt.Sprintf("%d_burned.mp4", vodID))
 
-		fmt.Printf("Uploading BURNED video %d to YouTube...\n", vodID)
-		d1.UpdateStatusBurned(vodID, 3) // uploading
+		fmt.Printf("[%d] Uploading BURNED video to YouTube...\n", vodID)
+		if cfg.HasD1() {
+			d1.UpdateStatusBurned(vodID, 3) // uploading
+		}
 
 		yt, err := youtube.NewYouTubeClient(ctx, "client_secret.json", "youtube_token.json")
 		if err != nil {
@@ -52,12 +57,16 @@ var uploadBurnCmd = &cobra.Command{
 
 		ytID, err := yt.UploadVideo(burnedPath, uploadTitle, description, "unlisted")
 		if err != nil {
-			d1.UpdateStatusBurned(vodID, 2) // reset to burned
+			if cfg.HasD1() {
+				d1.UpdateStatusBurned(vodID, 2) // reset to burned
+			}
 			log.Fatalf("Upload failed: %v", err)
 		}
 
-		d1.UpdateYTIDBurned(vodID, ytID, 4) // uploaded
-		fmt.Printf("Successfully uploaded burned video! YouTube ID: %s\n", ytID)
+		if cfg.HasD1() {
+			d1.UpdateYTIDBurned(vodID, ytID, 4) // uploaded
+		}
+		fmt.Printf("[%d] SUCCESS! Burned video uploaded. YouTube ID: %s\n", vodID, ytID)
 	},
 }
 
