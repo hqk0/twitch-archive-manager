@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"os/exec"
 	"regexp"
@@ -160,7 +161,6 @@ func convertCategory(name string) string {
 }
 
 func GenerateDescription(metadata *Metadata, cfg *config.Config) string {
-	// Add Viewer URL if configured
 	if cfg.ViewerBaseURL != "" {
 		metadata.ViewerURL = fmt.Sprintf("%s?v=%d", strings.TrimSuffix(cfg.ViewerBaseURL, "/"), metadata.VODID)
 	}
@@ -169,7 +169,6 @@ func GenerateDescription(metadata *Metadata, cfg *config.Config) string {
 	if b, err := os.ReadFile(cfg.YTDescTemplateFile); err == nil {
 		templateContent = string(b)
 	} else {
-		// Default generic template if file not found
 		templateContent = `{{if .HasMultipleCategories}}【カテゴリチャプター】
 {{range .Chapters}}{{.Timestamp}} {{.Title}}
 {{end}}
@@ -264,10 +263,10 @@ func ConvertTwitchJSONToIntegratedJSON(inputPath, outputPath string) error {
 
 	var integrated []IntegratedComment
 	for _, c := range twitchData.Comments {
-		ts := int(c.ContentOffsetSeconds)
+		vpos := int(math.Round(c.ContentOffsetSeconds * 100))
 		integrated = append(integrated, IntegratedComment{
-			Vpos:      ts * 100, // Approximate vpos
-			Timestamp: ts,
+			Vpos:      vpos,
+			Timestamp: int(math.Round(float64(vpos) / 100)),
 			Author:    c.Commenter.DisplayName,
 			Message:   c.Message.Body,
 		})
