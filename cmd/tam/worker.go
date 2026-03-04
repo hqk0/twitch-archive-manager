@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	"github.com/hqk0/twitch-archive-manager/internal/config"
@@ -77,7 +78,7 @@ func runWorker() {
 			fmt.Printf("[%d] Task is currently marked as 'uploading' (3). Skipping to avoid conflict.\n", task.ID)
 		}
 	}
-	
+
 	fmt.Println("Worker cycle completed.")
 }
 
@@ -130,26 +131,35 @@ func processPendingTask(ctx context.Context, task db.Video, cfg *config.Config, 
 		return
 	}
 
-	// 5. Update Status to burned (2)
+	// 5. Update Status to raw (2)
+
+	err = d1.UpdateStatusRaw(task.ID, 2)
+	if err != nil {
+		log.Printf("[%d] Failed to update status to raw: %v", task.ID, err)
+	} else {
+		notify.SendNotification(cfg, "ダウンロード完了", fmt.Sprintf("VOD %d のダウンロードが完了しました。4日後にアップロードされます。", task.ID), "default")
+	}
+
+	// 6. Update Status to burned (2)
 	err = d1.UpdateStatusBurned(task.ID, 2)
 	if err != nil {
 		log.Printf("[%d] Failed to update status to burned: %v", task.ID, err)
 	} else {
-		notify.SendNotification(cfg, "焼き込み完了", fmt.Sprintf("VOD %d の焼き込みが完了しました。3日後にアップロードされます。", task.ID), "default")
+		notify.SendNotification(cfg, "焼き込み完了", fmt.Sprintf("VOD %d の焼き込みが完了しました。4日後にアップロードされます。", task.ID), "default")
 	}
 }
 
 func processBurnedTask(ctx context.Context, task db.Video, cfg *config.Config, workspaceDir string, d1 *db.D1Client) {
 	duration, _ := twitch.ParseTwitchDuration(task.Duration)
 	endTime := task.CreatedAt.Add(duration)
-	timeLeft := 72*time.Hour - time.Since(endTime)
+	timeLeft := 96*time.Hour - time.Since(endTime)
 
 	if timeLeft > 0 {
 		fmt.Printf("[%d] Waiting for embargo: %.1f hours remaining.\n", task.ID, timeLeft.Hours())
 		return
 	}
 
-	log.Printf("[%d] 3 days passed since stream end. Uploading to YouTube...", task.ID)
+	log.Printf("[%d] 4 days passed since stream end. Uploading to YouTube...", task.ID)
 	d1.UpdateStatusBurned(task.ID, 3)
 
 	yt, err := youtube.NewYouTubeClient(ctx, "client_secret.json", "youtube_token.json")
@@ -167,10 +177,24 @@ func processBurnedTask(ctx context.Context, task db.Video, cfg *config.Config, w
 	uploadTitle := twitch.GenerateUploadTitle(metadata, cfg)
 	description := twitch.GenerateDescription(metadata, cfg)
 
+	// Upload Raw
+	rawPath := filepath.Join(workspaceDir, fmt.Sprintf("%d", task.ID), fmt.Sprintf("%d.mp4", task.ID))
+	rawTitle := strconv.FormatInt(task.ID, 10)
+	rawYtID, err := yt.UploadVideo(rawPath, rawTitle, "", "unlisted")
+	if err != nil {
+		log.Printf("[%d] Failed to upload raw to YouTube: %v", task.ID, err)
+	} else {
+		d1.UpdateStatusRaw(task.ID, 4)
+		sql := "UPDATE videos SET yt_id = ? WHERE id = ?;"
+		d1.Query(sql, []interface{}{rawYtID, task.ID})
+		log.Printf("[%d] Raw video uploaded. YouTube ID: %s", task.ID, rawYtID)
+	}
+
+	// Upload Burned
 	burnedPath := filepath.Join(workspaceDir, fmt.Sprintf("%d", task.ID), fmt.Sprintf("%d_burned.mp4", task.ID))
 	ytID, err := yt.UploadVideo(burnedPath, uploadTitle, description, "unlisted")
 	if err != nil {
-		log.Printf("[%d] Failed to upload to YouTube: %v", task.ID, err)
+		log.Printf("[%d] Failed to upload burned to YouTube: %v", task.ID, err)
 		d1.UpdateStatusBurned(task.ID, 2)
 		return
 	}
