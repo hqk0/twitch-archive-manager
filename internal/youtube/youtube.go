@@ -123,12 +123,14 @@ func (c *YouTubeClient) UploadVideo(filePath, title, description, privacyStatus 
 			CategoryId:  "24",
 		},
 		Status: &youtube.VideoStatus{
-			PrivacyStatus: privacyStatus,
+			PrivacyStatus:           privacyStatus,
+			SelfDeclaredMadeForKids: false,
+			ForceSendFields:         []string{"SelfDeclaredMadeForKids"},
 		},
 	}
 
 	call := c.Service.Videos.Insert([]string{"snippet", "status"}, video)
-	
+
 	bar := progressbar.NewOptions64(
 		fileSize,
 		progressbar.OptionSetDescription(fmt.Sprintf("Uploading %s", title)),
@@ -148,7 +150,7 @@ func (c *YouTubeClient) UploadVideo(filePath, title, description, privacyStatus 
 			BarEnd:        "]",
 		}),
 	)
-	
+
 	reader := &progressReader{
 		file: file,
 		bar:  bar,
@@ -176,13 +178,20 @@ func (r *progressReader) Read(p []byte) (n int, err error) {
 }
 
 func (c *YouTubeClient) SetPrivacyStatus(videoID, privacyStatus string) error {
-	video := &youtube.Video{
-		Id: videoID,
-		Status: &youtube.VideoStatus{
-			PrivacyStatus: privacyStatus,
-		},
+	// Fetch the existing video first to preserve other status fields like Embeddable
+	call := c.Service.Videos.List([]string{"status"}).Id(videoID)
+	response, err := call.Do()
+	if err != nil {
+		return fmt.Errorf("error fetching video status: %v", err)
 	}
 
-	_, err := c.Service.Videos.Update([]string{"status"}, video).Do()
+	if len(response.Items) == 0 {
+		return fmt.Errorf("video not found: %s", videoID)
+	}
+
+	video := response.Items[0]
+	video.Status.PrivacyStatus = privacyStatus
+
+	_, err = c.Service.Videos.Update([]string{"status"}, video).Do()
 	return err
 }
