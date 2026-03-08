@@ -45,6 +45,17 @@ func getClient(ctx context.Context, config *oauth2.Config, tokenPath string) *ht
 	if err != nil {
 		tok = getTokenFromWeb(config)
 		saveToken(tokenPath, tok)
+	} else {
+		tokenSource := config.TokenSource(ctx, tok)
+		newToken, err := tokenSource.Token()
+		if err != nil {
+			log.Printf("Token validation failed: %v. Re-authenticating...", err)
+			tok = getTokenFromWeb(config)
+			saveToken(tokenPath, tok)
+		} else if newToken.AccessToken != tok.AccessToken {
+			saveToken(tokenPath, newToken)
+			tok = newToken
+		}
 	}
 	return config.Client(ctx, tok)
 }
