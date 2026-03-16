@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/schollz/progressbar/v3"
@@ -17,7 +19,8 @@ import (
 )
 
 type YouTubeClient struct {
-	Service *youtube.Service
+	Service   *youtube.Service
+	TokenPath string
 }
 
 func NewYouTubeClient(ctx context.Context, clientSecretPath, tokenPath string) (*YouTubeClient, error) {
@@ -37,7 +40,7 @@ func NewYouTubeClient(ctx context.Context, clientSecretPath, tokenPath string) (
 		return nil, fmt.Errorf("unable to create YouTube service: %v", err)
 	}
 
-	return &YouTubeClient{Service: service}, nil
+	return &YouTubeClient{Service: service, TokenPath: tokenPath}, nil
 }
 
 func getClient(ctx context.Context, config *oauth2.Config, tokenPath string) *http.Client {
@@ -45,38 +48,37 @@ func getClient(ctx context.Context, config *oauth2.Config, tokenPath string) *ht
 	if err != nil {
 		tok = getTokenFromWeb(config)
 		saveToken(tokenPath, tok)
-	} else {
-		tokenSource := config.TokenSource(ctx, tok)
-		newToken, err := tokenSource.Token()
-		if err != nil {
-			log.Printf("Token validation failed: %v. Re-authenticating...", err)
-			tok = getTokenFromWeb(config)
-			saveToken(tokenPath, tok)
-		} else if newToken.AccessToken != tok.AccessToken {
-			saveToken(tokenPath, newToken)
-			tok = newToken
-		}
 	}
 	return config.Client(ctx, tok)
 }
 
 func getTokenFromWeb(config *oauth2.Config) *oauth2.Token {
 	codeChan := make(chan string)
-	server := &http.Server{Addr: ":8080"}
-	config.RedirectURL = "http://localhost:8080"
 
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		log.Fatalf("Failed to bind to a local port: %v", err)
+	}
+	port := listener.Addr().(*net.TCPAddr).Port
+
+	mux := http.NewServeMux()
+	server := &http.Server{Handler: mux}
+	config.RedirectURL = fmt.Sprintf("http://localhost:%d", port)
+
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		code := r.URL.Query().Get("code")
 		if code != "" {
 			fmt.Fprintf(w, "Authentication successful! You can close this window.")
-			codeChan <- code
+			go func() {
+				codeChan <- code
+			}()
 		} else {
 			fmt.Fprintf(w, "Authorization code not found.")
 		}
 	})
 
 	go func() {
-		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := server.Serve(listener); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("Failed to start local server: %v", err)
 		}
 	}()
@@ -169,6 +171,12 @@ func (c *YouTubeClient) UploadVideo(filePath, title, description, privacyStatus 
 
 	response, err := call.Media(reader).Do()
 	if err != nil {
+		if strings.Contains(err.Error(), "invalid_grant") || strings.Contains(err.Error(), "Token has been expired") {
+			if c.TokenPath != "" {
+				os.Remove(c.TokenPath)
+				log.Printf("Token error detected. Removed token file: %s so it can be recreated next time.", c.TokenPath)
+			}
+		}
 		return "", fmt.Errorf("error uploading video: %v", err)
 	}
 
