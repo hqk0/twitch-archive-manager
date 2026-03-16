@@ -102,6 +102,13 @@ func processPendingTask(ctx context.Context, task db.Video, cfg *config.Config, 
 		return
 	}
 
+	err = d1.UpdateStatusRaw(task.ID, 2)
+	if err != nil {
+		log.Printf("[%d] Failed to update status to raw: %v", task.ID, err)
+	} else {
+		notify.SendNotification(cfg, "ダウンロード完了", fmt.Sprintf("VOD %d のダウンロードが完了しました。4日後にアップロードされます。", task.ID), "default")
+	}
+
 	// 2. Download JSON from R2 with Twitch fallback
 	err = r2Client.DownloadFile(ctx, fmt.Sprintf("%d.json", task.ID), jsonPath)
 	if err != nil {
@@ -131,16 +138,7 @@ func processPendingTask(ctx context.Context, task db.Video, cfg *config.Config, 
 		return
 	}
 
-	// 5. Update Status to raw (2)
-
-	err = d1.UpdateStatusRaw(task.ID, 2)
-	if err != nil {
-		log.Printf("[%d] Failed to update status to raw: %v", task.ID, err)
-	} else {
-		notify.SendNotification(cfg, "ダウンロード完了", fmt.Sprintf("VOD %d のダウンロードが完了しました。4日後にアップロードされます。", task.ID), "default")
-	}
-
-	// 6. Update Status to burned (2)
+	// 5. Update Status to burned (2)
 	err = d1.UpdateStatusBurned(task.ID, 2)
 	if err != nil {
 		log.Printf("[%d] Failed to update status to burned: %v", task.ID, err)
@@ -180,9 +178,12 @@ func processBurnedTask(ctx context.Context, task db.Video, cfg *config.Config, w
 	// Upload Raw
 	rawPath := filepath.Join(workspaceDir, fmt.Sprintf("%d", task.ID), fmt.Sprintf("%d.mp4", task.ID))
 	rawTitle := strconv.FormatInt(task.ID, 10)
+
+	d1.UpdateStatusRaw(task.ID, 3)
 	rawYtID, err := yt.UploadVideo(rawPath, rawTitle, "", "unlisted")
 	if err != nil {
 		log.Printf("[%d] Failed to upload raw to YouTube: %v", task.ID, err)
+		d1.UpdateStatusRaw(task.ID, 2)
 	} else {
 		d1.UpdateStatusRaw(task.ID, 4)
 		sql := "UPDATE videos SET yt_id = ? WHERE id = ?;"
