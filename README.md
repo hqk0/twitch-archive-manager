@@ -5,7 +5,7 @@
 ## Key Features
 
 - **High-Quality Chat Rendering**: Built-in Go logic to generate ASS files with collision and "chasing" prevention, delivering a smooth, NicoNico-style "Danmaku" experience.
-- **Optional External SSD Support**: Smartly switches to an alternative workspace (`ALT_WORKSPACE_DIR`) if local disk space is low.
+- **Optional External SSD Support**: Smartly switches to an alternative workspace (`WORKSPACE_DIR`) if local disk space is low.
 - **Standalone Mode**: Use the `archive` command to process everything from download to YouTube upload in one go, with no database required.
 - **Hardware Acceleration**: Optimized for macOS using `h264_videotoolbox` for lightning-fast encoding.
 - **Fully Customizable**: Use Go templates to personalize your YouTube titles and descriptions.
@@ -16,31 +16,38 @@
 - [TwitchDownloaderCLI](https://github.com/lay295/TwitchDownloader)
 - [yt-dlp](https://github.com/yt-dlp/yt-dlp)
 - [ffmpeg](https://ffmpeg.org/)
-- **YouTube API Credentials**: 
+- **YouTube API Credentials**:
   - `client_secret.json`: Obtain this from the [Google Cloud Console](https://console.cloud.google.com/).
   - `youtube_token.json`: Stores your access tokens (generated automatically on first use).
 
 ## Usage
 
 ### One-shot Archiving
+
 Download, render Danmaku, and upload to YouTube in one command:
+
 ```bash
 ./tam archive <vod_id>
 ```
 
 ### Local Storage & Manual Processing
+
 For users who want to keep Danmaku-enabled videos locally without uploading to YouTube:
 
 1. **Download VOD**:
+
    ```bash
    ./tam download <vod_id>
    ```
+
    Saves to `./workspace/<vod_id>/<vod_id>.mp4`.
 
 2. **Generate Danmaku (ASS)**:
+
    ```bash
    ./tam ass <vod_id>
    ```
+
    Generates `<vod_id>.ass`. By matching the filename with the video, players like `mpv` will load the Danmaku automatically.
 
 3. **Burn Danmaku to Video**:
@@ -50,7 +57,9 @@ For users who want to keep Danmaku-enabled videos locally without uploading to Y
    Creates a hard-coded video: `<vod_id>_burned.mp4`.
 
 ### Automated Workflow (For Advanced Users)
+
 If you are using a real-time chat logger and Cloudflare D1:
+
 ```bash
 ./tam worker
 ```
