@@ -3,6 +3,7 @@ package youtube
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -17,6 +18,8 @@ import (
 	"google.golang.org/api/option"
 	"google.golang.org/api/youtube/v3"
 )
+
+var ErrTokenInvalid = errors.New("youtube token invalid or expired")
 
 type YouTubeClient struct {
 	Service   *youtube.Service
@@ -174,8 +177,9 @@ func (c *YouTubeClient) UploadVideo(filePath, title, description, privacyStatus 
 		if strings.Contains(err.Error(), "invalid_grant") || strings.Contains(err.Error(), "Token has been expired") {
 			if c.TokenPath != "" {
 				os.Remove(c.TokenPath)
-				log.Printf("Token error detected. Removed token file: %s so it can be recreated next time.", c.TokenPath)
+				log.Printf("Token error detected. Removed token file: %s. Please re-run the program to authenticate again.", c.TokenPath)
 			}
+			return "", ErrTokenInvalid
 		}
 		return "", fmt.Errorf("error uploading video: %v", err)
 	}

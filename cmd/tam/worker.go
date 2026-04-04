@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -182,6 +183,10 @@ func processBurnedTask(ctx context.Context, task db.Video, cfg *config.Config, w
 	d1.UpdateStatusRaw(task.ID, 3)
 	rawYtID, err := yt.UploadVideo(rawPath, rawTitle, "", "unlisted")
 	if err != nil {
+		if errors.Is(err, youtube.ErrTokenInvalid) {
+			d1.UpdateStatusRaw(task.ID, 2)
+			log.Fatalf("[%d] YouTube token is invalid or expired. Please re-run the program to authenticate again.", task.ID)
+		}
 		log.Printf("[%d] Failed to upload raw to YouTube: %v", task.ID, err)
 		d1.UpdateStatusRaw(task.ID, 2)
 	} else {
@@ -195,6 +200,10 @@ func processBurnedTask(ctx context.Context, task db.Video, cfg *config.Config, w
 	burnedPath := filepath.Join(workspaceDir, fmt.Sprintf("%d", task.ID), fmt.Sprintf("%d_burned.mp4", task.ID))
 	ytID, err := yt.UploadVideo(burnedPath, uploadTitle, description, "unlisted")
 	if err != nil {
+		if errors.Is(err, youtube.ErrTokenInvalid) {
+			d1.UpdateStatusBurned(task.ID, 2)
+			log.Fatalf("[%d] YouTube token is invalid or expired. Please re-run the program to authenticate again.", task.ID)
+		}
 		log.Printf("[%d] Failed to upload burned to YouTube: %v", task.ID, err)
 		d1.UpdateStatusBurned(task.ID, 2)
 		return
