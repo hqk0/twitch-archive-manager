@@ -185,6 +185,7 @@ func processBurnedTask(ctx context.Context, task db.Video, cfg *config.Config, w
 	if err != nil {
 		if errors.Is(err, youtube.ErrTokenInvalid) {
 			d1.UpdateStatusRaw(task.ID, 2)
+			d1.UpdateStatusBurned(task.ID, 2)
 			log.Fatalf("[%d] YouTube token is invalid or expired. Please re-run the program to authenticate again.", task.ID)
 		}
 		log.Printf("[%d] Failed to upload raw to YouTube: %v", task.ID, err)
